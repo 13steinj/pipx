@@ -71,7 +71,7 @@ def download_python_build_standalone(python_version: str, override: bool = False
             logger.warning(f"A previous attempt to install python {python_version} failed. Retrying.")
             shutil.rmtree(install_dir)
 
-    full_version, download_link = resolve_python_version(python_version)
+    full_version, (download_link, digest) = resolve_python_version(python_version)
 
     with tempfile.TemporaryDirectory() as tempdir:
         archive = Path(tempdir) / f"python-{full_version}.tar.gz"
@@ -81,7 +81,7 @@ def download_python_build_standalone(python_version: str, override: bool = False
         _download(full_version, download_link, archive)
 
         # unpack the python build
-        _unpack(full_version, download_link, archive, download_dir)
+        _unpack(full_version, download_link, archive, download_dir, digest)
 
         # the python installation we want is nested in the tarball
         # under a directory named 'python'. We move it to the install
@@ -104,15 +104,13 @@ def _download(full_version: str, download_link: str, archive: Path):
             raise PipxError(f"Unable to download python {full_version} build.") from e
 
 
-def _unpack(full_version, download_link, archive: Path, download_dir: Path):
+def _unpack(full_version, download_link, archive: Path, download_dir: Path, expected_checksum: str):
     with animate(f"Unpacking python {full_version} build", True):
         # Calculate checksum
         with open(archive, "rb") as python_zip:
-            checksum = hashlib.sha256(python_zip.read()).hexdigest()
+            checksum = "sha256:" + hashlib.sha256(python_zip.read()).hexdigest()
 
         # Validate checksum
-        checksum_link = download_link + ".sha256"
-        expected_checksum = urlopen(checksum_link).read().decode().rstrip("\n")
         if checksum != expected_checksum:
             raise PipxError(
                 f"Checksum mismatch for python {full_version} build. Expected {expected_checksum}, got {checksum}."
@@ -152,7 +150,7 @@ def get_latest_python_releases() -> List[str]:
         # raise
         raise PipxError(f"Unable to fetch python-build-standalone release data (from {GITHUB_API_URL}).") from e
 
-    return [asset["browser_download_url"] for asset in release_data["assets"]]
+    return [(asset["browser_download_url"], asset["digest"]) for asset in release_data["assets"]]
 
 
 def list_pythons(use_cache: bool = True) -> Dict[str, str]:
@@ -172,12 +170,12 @@ def list_pythons(use_cache: bool = True) -> Dict[str, str]:
         # Suffixes are in order of preference.
         for download_link_suffix in download_link_suffixes
         for link in python_releases
-        if link.endswith(download_link_suffix)
+        if link[0].endswith(download_link_suffix)
     ]
 
     python_versions: dict[str, str] = {}
     for link in available_python_links:
-        match = PYTHON_VERSION_REGEX.search(link)
+        match = PYTHON_VERSION_REGEX.search(link[0])
         assert match is not None
         python_version = match[1]
         # Don't override already found versions, they are in order of preference
